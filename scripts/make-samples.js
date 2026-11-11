@@ -8,6 +8,7 @@
 //   text-with-photos.pdf      selectable text + big photos (step A territory)
 //   scan-60.pdf               60 scanned pages stored as JPEG 2000 (step A can't touch them -> step B)
 //   long-300.pdf              300 scanned pages (too big for 2 MB even at the floor -> split)
+//   vector-report-25.pdf      25 pages of charts and text, no photos (as images it would grow -> split, text kept)
 //   letter.docx               not a photo or a PDF (the one rule)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -330,6 +331,25 @@ async function scannedPdf(pages, dpi, codec, seedBase, q, noise = 22) {
   return doc.save();
 }
 
+/** A report that is mostly charts (vector drawings) and text, no photos - step A can't shrink it, and as
+ *  images it would be bigger than the original (the case found in the first iPhone test). */
+async function vectorReport(pages, marks) {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const r = rng(91);
+  for (let p = 0; p < pages; p++) {
+    const page = doc.addPage(A4);
+    page.drawText(`Case analysis - section ${p + 1}`, { x: 50, y: 790, size: 18, font: bold, color: rgb(0.2, 0.2, 0.4) });
+    for (let l = 0, y = 760; l < 5; l++, y -= 15) page.drawText(lorem.slice(0, 70 + l * 9), { x: 50, y, size: 10, font });
+    const ops = [];
+    for (let i = 0; i < marks; i++) ops.push(`${(50 + r() * 495).toFixed(2)} ${(140 + r() * 520).toFixed(2)} ${(1 + r() * 3).toFixed(2)} ${(1 + r() * 3).toFixed(2)} re`);
+    page.node.addContentStream(doc.context.register(doc.context.flateStream(['0.25 0.35 0.75 rg', ...ops, 'f'].join('\n'))));
+    for (let l = 0, y = 110; l < 4; l++, y -= 15) page.drawText(lorem.slice(5, 80 + l * 5), { x: 50, y, size: 10, font });
+  }
+  return doc.save();
+}
+
 // ---------- write ----------
 
 function write(name, bytes) {
@@ -355,6 +375,7 @@ if (want('screenshot')) write('screenshot-huge.png', png(screenshot(5120, 2880),
 if (want('text')) write('text-with-photos.pdf', await textWithPhotos());
 if (want('scan')) write('scan-60.pdf', await scannedPdf(Number(process.env.SCAN_PAGES || 60), 200, 'jpx', 1000, Number(process.env.SCAN_Q || 10), Number(process.env.SCAN_NOISE || 8)));
 if (want('long')) write('long-300.pdf', await scannedPdf(Number(process.env.LONG_PAGES || 300), 150, 'jpeg', 5000, Number(process.env.LONG_Q || 10), Number(process.env.LONG_NOISE || 3)));
+if (want('vector')) write('vector-report-25.pdf', await vectorReport(25, 6000));
 if (want('docx')) write('letter.docx', str('PK\x03\x04\x14\x00\x06\x00[Content_Types].xml word/document.xml - not a photo or a PDF'));
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`done in ${((Date.now() - t0) / 1000).toFixed(1)} s -> ${path.relative(root, out)}`);

@@ -78,9 +78,13 @@ export async function inflate(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/** Undoes PNG row predictors (PDF /Predictor >= 10) in place into a new buffer without filter bytes. */
-export function unpredictPng(data, width, components) {
-  const rowLen = width * components;
+/**
+ * Undoes PNG row predictors (PDF /Predictor >= 10) into a new buffer without the filter bytes.
+ * Rows hold width x components samples of `bpc` bits, padded to whole bytes.
+ */
+export function unpredictPng(data, width, components, bpc = 8) {
+  const rowLen = Math.ceil((width * components * bpc) / 8);
+  const bpp = Math.max(1, Math.ceil((components * bpc) / 8));
   const rows = Math.floor(data.length / (rowLen + 1));
   const out = new Uint8Array(rows * rowLen);
   for (let y = 0; y < rows; y++) {
@@ -90,9 +94,9 @@ export function unpredictPng(data, width, components) {
     const prev = dst - rowLen;
     for (let x = 0; x < rowLen; x++) {
       const raw = data[src + x];
-      const a = x >= components ? out[dst + x - components] : 0;
+      const a = x >= bpp ? out[dst + x - bpp] : 0;
       const b = y > 0 ? out[prev + x] : 0;
-      const c = y > 0 && x >= components ? out[prev + x - components] : 0;
+      const c = y > 0 && x >= bpp ? out[prev + x - bpp] : 0;
       let v;
       switch (filter) {
         case 0: v = raw; break;
@@ -110,6 +114,32 @@ export function unpredictPng(data, width, components) {
         default: throw new Error(`bad PNG filter ${filter}`);
       }
       out[dst + x] = v & 0xff;
+    }
+  }
+  return out;
+}
+
+/**
+ * Palette (PDF /Indexed) image -> 8-bit samples of the base colour space. Indices have `bpc` bits
+ * (1, 2, 4 or 8), rows padded to whole bytes; `palette` holds (hival + 1) x baseComponents bytes.
+ */
+export function expandIndexed(data, width, height, bpc, palette, baseComponents) {
+  const rowLen = Math.ceil((width * bpc) / 8);
+  const out = new Uint8Array(width * height * baseComponents);
+  const maxIndex = Math.floor(palette.length / baseComponents) - 1;
+  const mask = (1 << bpc) - 1;
+  let o = 0;
+  for (let y = 0; y < height; y++) {
+    const row = y * rowLen;
+    for (let x = 0; x < width; x++) {
+      let index;
+      if (bpc === 8) index = data[row + x];
+      else {
+        const bit = x * bpc;
+        index = (data[row + (bit >> 3)] >> (8 - bpc - (bit & 7))) & mask;
+      }
+      const p = Math.min(index, maxIndex) * baseComponents;
+      for (let k = 0; k < baseComponents; k++) out[o++] = palette[p + k] ?? 0;
     }
   }
   return out;

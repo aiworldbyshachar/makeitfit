@@ -53,6 +53,7 @@ export const STRINGS = {
     stagePdf: 'Shrinking the photos inside the PDF',
     stagePages: 'Turning the pages into images',
     stageSplit: 'Making the parts',
+    stagePlan: 'Looking for the best way to make it fit',
     cancel: 'Cancel',
 
     resultFits: '{size} - fits under {limit}',
@@ -75,7 +76,10 @@ export const STRINGS = {
 
     cantTitle: "It can't fit {limit} and stay readable",
     cantBody: 'The smallest readable size is {size}.',
+    cantAlreadySmall: 'It is already about as small as it can be while staying readable ({size}).',
     cantSplitBody: { one: 'It can be split into 1 file under {limit}.', other: 'It can be split into {n} files, each under {limit}.' },
+    cantSplitTextBody: { one: 'It can be split into 1 file under {limit}, and the text stays selectable.', other: 'It can be split into {n} files, each under {limit}, and the text stays selectable.' },
+    cantPagesNote: "In the parts the pages become images, so the text can't be selected.",
     cantSplit: { one: 'Split into 1 file', other: 'Split into {n} files' },
     cantBigger: 'Change the limit',
 

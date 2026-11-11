@@ -3,7 +3,7 @@
 // The file list and the version below are written by `npm run sw` (scripts/build-sw.js).
 
 // FILES-START (generated - do not edit by hand)
-const VERSION = 'b51d4287c52e';
+const VERSION = 'eb6745b02622';
 const FILES = [
   './',
   'css/site.css',

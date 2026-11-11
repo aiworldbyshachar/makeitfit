@@ -48,3 +48,16 @@ test('Flate image data with PNG predictors decodes to RGBA', async () => {
   assert.equal(rgba.length, w * h * 4);
   assert.deepEqual([...rgba.subarray(0, 4)], [10, 20, 30, 255]);
 });
+
+test('palette images: 4-bit indices with a PNG predictor expand to their colours', async () => {
+  const { expandIndexed } = await import('../docs/js/engine/images.js');
+  // 3 x 2 pixels, 4-bit indices: row 0 = 0,1,2  row 1 = 3,0,1 (rows padded to whole bytes).
+  const raw = Uint8Array.from([0x01, 0x20, 0x30, 0x10]);
+  const palette = Uint8Array.from([0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255]);
+  const rgb = expandIndexed(raw, 3, 2, 4, palette, 3);
+  assert.deepEqual([...rgb], [0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0]);
+  // The same rows behind PNG "Up" filters (filter byte 2, row length 2 bytes).
+  const withFilters = Uint8Array.from([2, 0x01, 0x20, 2, 0x2f, 0xf0]);
+  const back = unpredictPng(await inflate(zlib.deflateSync(withFilters)), 3, 1, 4);
+  assert.deepEqual([...back], [0x01, 0x20, 0x30, 0x10]);
+});

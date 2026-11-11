@@ -94,3 +94,36 @@ test('a rotated PDF comes back with its pages turned', async () => {
   const doc = await PDFDocument.load(r.outputs[0].bytes);
   assert.deepEqual(doc.getPages().map((p) => p.getRotation().angle), [90, 90]);
 });
+
+/** A report that is mostly vector drawings and text (charts, no photos): like the 1.6 MB PDF from the iPhone test. */
+async function vectorReport(pages, marksPerPage) {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  let s = 3;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let p = 0; p < pages; p++) {
+    const page = doc.addPage([595, 842]);
+    page.drawText(`Quarterly figures - page ${p + 1}`, { x: 50, y: 790, size: 16, font });
+    const ops = [];
+    for (let i = 0; i < marksPerPage; i++) ops.push(`${(50 + rnd() * 495).toFixed(2)} ${(120 + rnd() * 600).toFixed(2)} ${(1 + rnd() * 3).toFixed(2)} ${(1 + rnd() * 3).toFixed(2)} re`);
+    page.pushOperators();
+    page.node.addContentStream(doc.context.register(doc.context.flateStream(`0.3 0.4 0.8 rg\n${ops.join('\n')}\nf`)));
+  }
+  return doc.save();
+}
+
+test('a vector-heavy PDF that step A cannot shrink splits into files that keep the text', async () => {
+  const { chooseAfterStepA } = await import('../docs/js/engine/split.js');
+  const src = await vectorReport(10, 5000);
+  const limit = Math.floor(src.length * 0.62);
+  const r = await makeItFit({ files: [{ name: 'report.pdf', bytes: src }], limit }, env());
+  assert.equal(r.status, 'ask-rasterize');
+  assert.equal(r.stepA.reason, 'no-images');
+  // As images it would be far bigger than the original (estimated on the page; here: twice the original).
+  const plan = chooseAfterStepA({ floorA: r.stepA.size, floorB: src.length * 2, limit });
+  assert.equal(plan.action, 'split-text');
+  const s = await splitToFit({ mode: 'stepA', source: r.source, limit, parts: plan.parts, maxParts: plan.maxParts, name: 'report.pdf' }, env());
+  assert.equal(s.status, 'done');
+  assert.equal(s.outputs.length, 2);
+  for (const o of s.outputs) assert.ok(o.size <= limit, `${o.size} > ${limit}`);
+});

@@ -213,7 +213,7 @@ export async function makeItFit(job, env, onProgress = () => {}) {
 
   const a = await stepA(source, limit, codec, { onProgress: progress('stepA') });
   if (a.ok) return done(a.cleanedOnly ? 'cleaned' : 'stepA', [{ name: pdfName, bytes: a.bytes }], { setting: a.setting, changed: a.changed, images: a.images, pages: a.pages });
-  const ask = { status: 'ask-rasterize', source, name, stepA: { reason: a.reason, smallestReadable: a.floorSize } };
+  const ask = { status: 'ask-rasterize', source, name, stepA: { reason: a.reason, smallestReadable: a.floorSize, size: a.size } };
   if (!job.allowRasterize || !env.openRenderer) return ask;
   return rasterize(source, limit, env, onProgress, name);
 }
@@ -235,7 +235,8 @@ export async function rasterize(source, limit, env, onProgress = () => {}, name 
 
 /**
  * Splits into several files, each under the limit.
- * args: { mode: 'pages' | 'photos' | 'stepA', source?, files?, limit, parts, name }
+ * args: { mode: 'pages' | 'photos' | 'stepA', source?, files?, limit, parts, maxParts?, name }
+ *   When a split comes out too big, it tries again with one more part, up to maxParts.
  *   'pages'  - pages become images (needs env.openRenderer)
  *   'stepA'  - keeps text selectable (the user declined step B)
  *   'photos' - several photos, several PDFs
@@ -244,9 +245,10 @@ export async function splitToFit(args, env, onProgress = () => {}) {
   const { mode, limit, name } = args;
   const codec = env.codec;
   let parts = Math.max(2, args.parts || 2);
+  const maxParts = args.maxParts || parts + 3;
   const named = (i, n) => outputName(name, limit, 'pdf', { index: i + 1, count: n });
 
-  for (let attempt = 0; attempt < 4; attempt++, parts++) {
+  for (; parts <= maxParts; parts++) {
     const outputs = [];
     let failed = false;
     if (mode === 'pages') {

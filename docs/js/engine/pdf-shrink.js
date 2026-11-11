@@ -1,11 +1,12 @@
 // Shrinking PDFs.
 // Step A keeps the text sharp and selectable: clean up the file (metadata, thumbnails, unused objects,
-// object streams) and re-encode the photos inside it at the best quality that fits.
+// identical streams stored twice, uncompressed streams, object streams) and re-encode the photos inside
+// it at the best quality that fits.
 // Step B (only after the user agrees) renders every page and rebuilds the PDF from page images.
-import { PDFDocument, PDFName, PDFRawStream, PDFDict, PDFArray, PDFNumber, PDFRef, PDFStream, PDFBool } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
+import { PDFDocument, PDFName, PDFRawStream, PDFDict, PDFArray, PDFNumber, PDFRef, PDFStream, PDFBool, PDFString, PDFHexString } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
 import { SetFitter, PHOTO_STEPS, PAGE_STEPS, fitSet, pickMix } from './search.js';
 import { buildImagePdf, imagePdfOverhead, stampInfo } from './pdf-build.js';
-import { scaledPixels, stripExif, inflate, unpredictPng, toRGBA, sharedView } from './images.js';
+import { scaledPixels, stripExif, inflate, unpredictPng, toRGBA, sharedView, expandIndexed } from './images.js';
 import { packRuns, balancedRuns } from './split.js';
 
 const N = (s) => PDFName.of(s);
@@ -22,6 +23,24 @@ function single(ctx, value) {
   const v = ctx.lookup(value);
   if (v instanceof PDFArray) return v.size() === 1 ? ctx.lookup(v.get(0)) : v.size() === 0 ? undefined : 'many';
   return v;
+}
+
+/**
+ * What step A needs to know about an image's colour space: { components (1 or 3), out (the colour space
+ * of the re-encoded JPEG), indexed? { base, hival, lookup } }, or null when it can't re-encode it.
+ */
+function colourInfo(ctx, cs) {
+  const v = ctx.lookup(cs);
+  if (v instanceof PDFArray && nameOf(ctx.lookup(v.get(0))) === 'Indexed' && v.size() >= 4) {
+    const baseRaw = v.get(1);
+    const base = components(ctx, baseRaw);
+    const hi = ctx.lookup(v.get(2));
+    if (!base || !(hi instanceof PDFNumber)) return null;
+    return { components: 1, out: base === 3 ? baseRaw : N('DeviceRGB'), indexed: { base, hival: hi.asNumber(), lookup: ctx.lookup(v.get(3)) } };
+  }
+  const n = components(ctx, cs);
+  if (!n) return null;
+  return { components: n, out: n === 3 ? cs : N('DeviceRGB') };
 }
 
 /** Components of a colour space we can re-encode (1 or 3), or 0 for anything else. */
@@ -106,19 +125,23 @@ export function findImages(doc) {
     img.bytes = img.stream.contents.length;
     const filter = single(ctx, d.get(N('Filter')));
     img.filter = filter === 'many' ? 'many' : nameOf(filter) || 'none';
-    img.components = components(ctx, d.get(N('ColorSpace')));
+    const colour = colourInfo(ctx, d.get(N('ColorSpace')));
+    img.components = colour?.components || 0;
+    img.outColorSpace = colour?.out;
+    img.indexed = colour?.indexed;
+    img.bpc = num('BitsPerComponent');
     const reason = (() => {
       if (masks.has(img.ref)) return 'mask';
       const im = d.lookup(N('ImageMask'));
       if (im instanceof PDFBool && im.asBoolean()) return 'mask';
       if (!img.width || !img.height) return 'size unknown';
       if (img.bytes < MIN_IMAGE_BYTES) return 'small';
-      if (num('BitsPerComponent') !== 8) return 'not 8-bit';
-      if (!img.components) return 'colour space';
+      if (!colour) return 'colour space';
+      if (img.indexed ? ![1, 2, 4, 8].includes(img.bpc) : img.bpc !== 8) return `${img.bpc}-bit`;
       if (d.lookup(N('Decode'))) return 'decode array';
       if (d.lookup(N('Mask')) instanceof PDFArray) return 'colour-key mask';
-      if (img.filter === 'DCTDecode') return null;
-      if (img.filter === 'FlateDecode') {
+      if (img.filter === 'DCTDecode') return img.indexed ? 'indexed JPEG' : null;
+      if (img.filter === 'FlateDecode' || img.filter === 'none') {
         const parms = single(ctx, d.get(N('DecodeParms')));
         const pred = parms instanceof PDFDict ? parms.lookup(N('Predictor')) : null;
         const p = pred instanceof PDFNumber ? pred.asNumber() : 1;
@@ -134,12 +157,90 @@ export function findImages(doc) {
   return all;
 }
 
+/** The bytes of a palette: a string in the colour space array, or a (maybe compressed) stream. */
+async function paletteBytes(lookup) {
+  if (lookup instanceof PDFString || lookup instanceof PDFHexString) return lookup.asBytes();
+  if (lookup instanceof PDFRawStream) {
+    const f = lookup.dict.get(N('Filter'));
+    return f ? inflate(lookup.contents) : lookup.contents;
+  }
+  throw new Error('palette not readable');
+}
+
 /** Decodes one eligible PDF image into a codec raster at full size. */
 export async function decodePdfImage(img, codec) {
   if (img.filter === 'DCTDecode') return codec.decodeImage(stripExif(img.stream.contents), 'image/jpeg', { orientation: 'none' });
-  let data = await inflate(img.stream.contents);
+  let data = img.filter === 'FlateDecode' ? await inflate(img.stream.contents) : img.stream.contents;
+  if (img.indexed) {
+    if (img.pngPredictor) data = unpredictPng(data, img.width, 1, img.bpc);
+    const palette = await paletteBytes(img.indexed.lookup);
+    const samples = expandIndexed(data, img.width, img.height, img.bpc, palette, img.indexed.base);
+    return codec.fromRGBA(toRGBA(samples, img.width, img.height, img.indexed.base), img.width, img.height);
+  }
   if (img.pngPredictor) data = unpredictPng(data, img.width, img.components);
   return codec.fromRGBA(toRGBA(data, img.width, img.height, img.components), img.width, img.height);
+}
+
+// ---------- compacting: identical streams stored once, raw streams compressed ----------
+
+async function deflate(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function fnv(bytes) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 0x01000193);
+  return h >>> 0;
+}
+
+const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * Stores identical streams once (a font or picture embedded again on every page is common in PDFs
+ * made by merging or printing), and compresses streams written without any compression.
+ * Returns { merged, compressed }.
+ */
+export async function compactStreams(doc) {
+  const ctx = doc.context;
+  const seen = new Map();
+  const remap = new Map();
+  for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream) || obj.contents.length < 1024) continue;
+    const key = `${obj.contents.length}|${fnv(obj.contents)}|${obj.dict.toString()}`;
+    const first = seen.get(key);
+    if (!first) seen.set(key, ref);
+    else if (sameBytes(ctx.lookup(first).contents, obj.contents)) remap.set(ref, first);
+  }
+  if (remap.size) {
+    const fix = (o) => {
+      if (o instanceof PDFDict) {
+        for (const [k, v] of o.entries()) {
+          if (v instanceof PDFRef && remap.has(v)) o.set(k, remap.get(v));
+          else fix(v);
+        }
+      } else if (o instanceof PDFArray) {
+        for (let i = 0; i < o.size(); i++) {
+          const v = o.get(i);
+          if (v instanceof PDFRef && remap.has(v)) o.set(i, remap.get(v));
+          else fix(v);
+        }
+      } else if (o instanceof PDFStream) fix(o.dict);
+    };
+    for (const [, obj] of ctx.enumerateIndirectObjects()) fix(obj);
+    for (const ref of remap.keys()) ctx.delete(ref);
+  }
+  let compressed = 0;
+  for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream) || obj.dict.get(N('Filter')) !== undefined || obj.contents.length < 512) continue;
+    const z = await deflate(obj.contents);
+    if (z.length > obj.contents.length * 0.9) continue;
+    const dict = obj.dict.clone(ctx);
+    dict.set(N('Filter'), N('FlateDecode'));
+    ctx.assign(ref, PDFRawStream.of(dict, z));
+    compressed++;
+  }
+  return { merged: remap.size, compressed };
 }
 
 /** Opens a raster for a ladder step (long side), releasing the full-size one when it was scaled. */
@@ -151,7 +252,7 @@ export async function openScaled(decode, codec, side) {
 }
 
 function replaceImage(ctx, img, pick) {
-  const cs = img.components === 3 ? img.dict.get(N('ColorSpace')) : N('DeviceRGB');
+  const cs = img.outColorSpace || N('DeviceRGB');
   const stream = ctx.stream(pick.bytes, {
     Type: 'XObject',
     Subtype: 'Image',
@@ -189,6 +290,7 @@ export async function stepA(bytes, limit, codec, { onProgress } = {}) {
   const doc = await loadPdf(bytes);
   if (doc.isEncrypted) return { ok: false, reason: 'encrypted' };
   cleanDocument(doc);
+  await compactStreams(doc);
   const images = findImages(doc).filter((i) => i.eligible);
   const cleaned = await doc.save({ useObjectStreams: true });
   if (cleaned.length <= limit) return { ok: true, bytes: cleaned, setting: null, changed: 0, cleanedOnly: true, pages: doc.getPageCount() };
@@ -242,12 +344,10 @@ export function pageRenderSize(widthPt, heightPt, dpi) {
  * `pages` limits it to some page indices (used by the split). Returns { ok: true, bytes, setting } or
  * { ok: false, reason: 'floor', floorSize }.
  */
-export async function stepB(renderer, limit, codec, { onProgress, pages } = {}) {
-  const idx = pages || Array.from({ length: renderer.pageCount }, (_, i) => i);
-  const sizes = [];
-  for (const i of idx) sizes.push(await renderer.pageSize(i));
-  const items = idx.map((pageIndex, k) => {
-    let top = null; // a sample page rendered once at the top DPI; lower steps are scaled down from it
+/** Fitter items for rendered pages: a probed sample page is rendered once at `topDpi` and scaled down. */
+function pageItems(renderer, codec, idx, sizes, topDpi = PAGE_STEPS[0]) {
+  return idx.map((pageIndex, k) => {
+    let top = null;
     return {
       pixelsAt: (dpi) => {
         const s = pageRenderSize(sizes[k].width, sizes[k].height, dpi);
@@ -255,7 +355,7 @@ export async function stepB(renderer, limit, codec, { onProgress, pages } = {}) 
       },
       open: async (dpi, { probe } = {}) => {
         if (!top && !probe) return renderer.renderPage(pageIndex, dpi);
-        if (!top) top = await renderer.renderPage(pageIndex, PAGE_STEPS[0]);
+        if (!top) top = await renderer.renderPage(pageIndex, Math.max(topDpi, dpi));
         const want = pageRenderSize(sizes[k].width, sizes[k].height, dpi);
         const scaled = await codec.resize(top, Math.max(want.width, want.height));
         return scaled === top ? sharedView(top) : scaled;
@@ -266,6 +366,30 @@ export async function stepB(renderer, limit, codec, { onProgress, pages } = {}) 
       },
     };
   });
+}
+
+/**
+ * The smallest readable size if every page became an image (100 DPI, quality 0.5), estimated from three
+ * sample pages - used to decide whether step B can help at all before offering it.
+ */
+export async function stepBFloor(renderer, codec, { onProgress } = {}) {
+  const idx = Array.from({ length: renderer.pageCount }, (_, i) => i);
+  const sizes = [];
+  for (const i of idx) sizes.push(await renderer.pageSize(i));
+  const floorDpi = PAGE_STEPS[PAGE_STEPS.length - 1];
+  const fitter = new SetFitter(pageItems(renderer, codec, idx, sizes, floorDpi), codec, { steps: PAGE_STEPS, samples: 3, onProgress });
+  try {
+    return (await fitter.floorEstimate()) + imagePdfOverhead(idx.length);
+  } finally {
+    fitter.dispose();
+  }
+}
+
+export async function stepB(renderer, limit, codec, { onProgress, pages } = {}) {
+  const idx = pages || Array.from({ length: renderer.pageCount }, (_, i) => i);
+  const sizes = [];
+  for (const i of idx) sizes.push(await renderer.pageSize(i));
+  const items = pageItems(renderer, codec, idx, sizes);
   const fitter = new SetFitter(items, codec, { steps: PAGE_STEPS, samples: 3, onProgress });
   const overhead = imagePdfOverhead(idx.length);
   let budget = limit - overhead - margin(limit);

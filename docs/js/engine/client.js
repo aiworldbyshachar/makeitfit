@@ -4,6 +4,8 @@
 // canvas encoding the browser slows down, still runs at full speed).
 import { rasterize, splitToFit } from './pipeline.js';
 import { openPdfRenderer } from './render-pdfjs.js';
+import { stepBFloor } from './pdf-shrink.js';
+import { chooseAfterStepA } from './split.js';
 
 export function createEngine() {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
@@ -26,13 +28,54 @@ export function createEngine() {
 
   const pageEnv = { codec: createWorkerCodec(call), openRenderer: (bytes) => openPdfRenderer(bytes) };
 
+  /**
+   * Step A (text kept) wasn't enough. Before asking anything, compare it with the pages as images, so the
+   * page never offers a way that ends bigger (a text PDF as images can be twice the size of the original):
+   * ask about images only when they make one file that fits; otherwise offer the split that needs the
+   * fewest files, keeping the text when it needs no more files than images would.
+   */
+  async function afterStepA(ask, limit, onProgress) {
+    onProgress?.({ stage: 'plan' });
+    let floorB = Infinity;
+    try {
+      const renderer = await openPdfRenderer(ask.source);
+      try {
+        floorB = await stepBFloor(renderer, pageEnv.codec);
+      } finally {
+        renderer.close();
+      }
+    } catch {
+      // pdf.js can't render it: images aren't an option
+    }
+    const a = ask.stepA;
+    const floorA = a.reason === 'floor' ? a.smallestReadable : a.reason === 'no-images' ? a.size : Infinity;
+    const plan = chooseAfterStepA({ floorA, floorB, limit });
+    const base = { source: ask.source, name: ask.name, smallestReadable: plan.smallest };
+    if (plan.action === 'ask') return { ...ask, stepBFloor: floorB };
+    if (plan.action === 'split-text') {
+      const s = await call('split', { mode: 'stepA', source: ask.source, limit, parts: plan.parts, maxParts: plan.maxParts, name: ask.name }, onProgress);
+      if (s.status === 'done') return { status: 'cannot-fit', ...base, parts: s.outputs.length, mode: 'stepA', ready: s };
+      if (!Number.isFinite(floorB)) return { status: 'cannot-fit', ...base, parts: null };
+      return { status: 'cannot-fit', ...base, parts: chooseAfterStepA({ floorA: Infinity, floorB, limit }).parts, mode: 'pages' };
+    }
+    if (plan.action === 'split-images') return { status: 'cannot-fit', ...base, parts: plan.parts, mode: 'pages' };
+    return { status: 'cannot-fit', ...base, parts: null };
+  }
+
   return {
     /** Exact facts for a dropped file. */
     describe: (file) => call('describe', { file }),
     /** A small JPEG preview of a photo (any allowed kind, HEIC too): { bytes, width, height }. */
     thumb: (bytes, kind) => call('thumb', { bytes, kind }),
-    /** The job (see pipeline.js makeItFit). Step B is never run here - it returns 'ask-rasterize'. */
-    fit: (job, onProgress) => call('fit', { ...job, allowRasterize: false }, onProgress),
+    /**
+     * The job (see pipeline.js makeItFit). Step B is never run without asking: when step A falls short this
+     * returns 'ask-rasterize' (images would make one file that fits) or 'cannot-fit' with the best split
+     * (a split that keeps the text comes ready-made in `ready`).
+     */
+    fit: async (job, onProgress) => {
+      const r = await call('fit', { ...job, allowRasterize: false }, onProgress);
+      return r.status === 'ask-rasterize' ? afterStepA(r, job.limit, onProgress) : r;
+    },
     /** Step B after the user said yes. */
     rasterize: (source, limit, name, onProgress) => rasterize(source, limit, pageEnv, onProgress, name),
     /** Split into parts; 'pages' mode renders on the page, the others run in the worker. */

@@ -318,7 +318,7 @@ function hideError() {
   $('error').hidden = true;
 }
 
-const STAGES = { photo: 'stagePhotos', photos: 'stagePhotos', stepA: 'stagePdf', stepB: 'stagePages', split: 'stageSplit' };
+const STAGES = { photo: 'stagePhotos', photos: 'stagePhotos', stepA: 'stagePdf', stepB: 'stagePages', split: 'stageSplit', plan: 'stagePlan' };
 function progressFor(gen) {
   const bar = $('bar');
   return (p) => {
@@ -380,8 +380,11 @@ async function answer(r, lim, files) {
   if (r.status === 'cannot-fit') {
     state.pending = { ...r, limit: lim, files };
     $('cant-title').textContent = t('cantTitle', { limit: formatLimit(lim) });
-    const body = [r.smallestReadable ? t('cantBody', { size: formatSize(r.smallestReadable, { precise: true }) }) : ''];
-    if (r.parts) body.push(t('cantSplitBody', { n: r.parts, limit: formatLimit(lim) }));
+    const original = state.items.reduce((s, i) => s + i.size, 0);
+    const smallest = r.smallestReadable ? formatSize(r.smallestReadable, { precise: true }) : '';
+    const body = [!smallest ? '' : r.smallestReadable >= original * 0.95 ? t('cantAlreadySmall', { size: smallest }) : t('cantBody', { size: smallest })];
+    if (r.parts) body.push(t(r.mode === 'stepA' ? 'cantSplitTextBody' : 'cantSplitBody', { n: r.parts, limit: formatLimit(lim) }));
+    if (r.parts && r.mode === 'pages') body.push(t('cantPagesNote'));
     $('cant-body').textContent = body.filter(Boolean).join(' ');
     $('cant-split').hidden = !r.parts;
     $('cant-split').textContent = r.parts ? t('cantSplit', { n: r.parts }) : '';
@@ -417,6 +420,7 @@ $('ask-split').addEventListener('click', () => {
 
 $('cant-split').addEventListener('click', () => {
   const p = state.pending;
+  if (p.ready) return answer(p.ready, p.limit); // the split keeping the text is already made
   const args = { mode: p.mode, name: p.name || state.items[0]?.name, limit: p.limit, parts: p.parts };
   if (p.mode === 'photos') args.files = p.files.map((f) => ({ name: f.name, bytes: f.bytes.slice(), rotate: f.rotate }));
   else args.source = p.source;

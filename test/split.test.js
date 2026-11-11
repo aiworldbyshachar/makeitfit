@@ -29,3 +29,23 @@ test('pack runs fills each part up to the capacity', () => {
   assert.deepEqual(packRuns([4, 4, 4], 10, (n) => 2 * n), [[0, 1], [1, 2], [2, 3]]);
   assert.equal(packRuns([4, 11], 10), null);
 });
+
+test('after step A: never offer a way that ends bigger', async () => {
+  const { chooseAfterStepA } = await import('../docs/js/engine/split.js');
+  const MB = 1_000_000;
+  // The case found on an iPhone: a 1.6 MB text PDF, 1 MB limit. Step A got it to ~1.25 MB; as images it
+  // would be 3.16 MB. The answer is two files with the text kept - not four image files.
+  const user = chooseAfterStepA({ floorA: 1.25 * MB, floorB: 3.16 * MB, limit: 1 * MB });
+  assert.equal(user.action, 'split-text');
+  assert.equal(user.parts, 2);
+  assert.equal(user.smallest, 1.25 * MB);
+  // Images make one file that fits: ask first.
+  assert.equal(chooseAfterStepA({ floorA: 12 * MB, floorB: 2.6 * MB, limit: 3 * MB }).action, 'ask');
+  // Images need far fewer files than keeping the text: offer the image split.
+  const scan = chooseAfterStepA({ floorA: 40 * MB, floorB: 6 * MB, limit: 3 * MB });
+  assert.deepEqual([scan.action, scan.parts], ['split-images', 3]);
+  // Step A can't open it (protected) and images are too big for one file.
+  assert.equal(chooseAfterStepA({ floorA: Infinity, floorB: 6 * MB, limit: 3 * MB }).action, 'split-images');
+  // Nothing works.
+  assert.equal(chooseAfterStepA({ floorA: Infinity, floorB: Infinity, limit: 3 * MB }).action, 'none');
+});

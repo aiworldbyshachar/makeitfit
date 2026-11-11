@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
-import { PDFDocument, StandardFonts, PDFName, PDFRawStream } from '../docs/vendor/pdf-lib/pdf-lib.esm.min.js';
+import { PDFDocument, StandardFonts, PDFName, PDFRawStream, PDFHexString } from '../docs/vendor/pdf-lib/pdf-lib.esm.min.js';
 import { buildImagePdf, imagePdfOverhead } from '../docs/js/engine/pdf-build.js';
 import { stepA, stepB, findImages, loadPdf } from '../docs/js/engine/pdf-shrink.js';
 import { createNodeCodec, syntheticJpeg, syntheticRGBA } from './helpers/node-codec.js';
@@ -141,4 +141,51 @@ test('split with pages as images: one render per page, fewest parts, each under 
     next = p.pages[1] + 1;
   }
   assert.equal(next, pages + 1);
+});
+
+test('compacting: identical streams are stored once, uncompressed ones get compressed', async () => {
+  const { compactStreams } = await import('../docs/js/engine/pdf-shrink.js');
+  const doc = await PDFDocument.create();
+  const ctx = doc.context;
+  // The same 40 KB uncompressed content stream written separately for two pages (as some exporters do).
+  const ops = Array.from({ length: 2000 }, (_, i) => `${(i * 7) % 500} ${(i * 13) % 800} 2 2 re f`).join('\n');
+  for (let p = 0; p < 2; p++) {
+    const page = doc.addPage([595, 842]);
+    page.node.set(PDFName.of('Contents'), ctx.register(ctx.stream(ops)));
+  }
+  const before = await doc.save({ useObjectStreams: false });
+  const r = await compactStreams(doc);
+  assert.equal(r.merged, 1);
+  assert.ok(r.compressed >= 1);
+  const after = await doc.save({ useObjectStreams: false });
+  assert.ok(after.length < before.length / 3, `${after.length} vs ${before.length}`);
+  const back = await PDFDocument.load(after);
+  const [a, b] = back.getPages().map((p) => p.node.get(PDFName.of('Contents')));
+  assert.equal(a.toString(), b.toString(), 'both pages point at one stream');
+});
+
+test('step A re-encodes palette (indexed) images too', async () => {
+  const doc = await PDFDocument.create();
+  const ctx = doc.context;
+  const w = 600, h = 450;
+  const idx = new Uint8Array(w * h);
+  let s = 7;
+  for (let i = 0; i < idx.length; i++) idx[i] = (Math.floor((i % w) / 3 + i / w / 3) + (((s = (s * 1103515245 + 12345) >>> 0) >>> 28) & 3)) % 200; // a gradient with a little grain
+  const palette = new Uint8Array(200 * 3).map((_, i) => [Math.floor(i / 3), 220 - Math.floor(i / 6), 60 + Math.floor(i / 5)][i % 3]); // a smooth colour ramp
+  const img = ctx.register(ctx.stream(zlib.deflateSync(idx), {
+    Type: 'XObject', Subtype: 'Image', Width: w, Height: h, BitsPerComponent: 8, Filter: 'FlateDecode',
+    ColorSpace: ctx.obj(['Indexed', 'DeviceRGB', 199, PDFHexString.of(Buffer.from(palette).toString('hex'))]),
+  }));
+  const page = doc.addPage([595, 842]);
+  const name = page.node.newXObject('Pal', img);
+  page.node.addContentStream(ctx.register(ctx.stream(`q 500 0 0 375 40 300 cm ${name.toString()} Do Q`)));
+  const src = await doc.save();
+  const found = findImages(await loadPdf(src));
+  assert.equal(found[0].eligible, true, found[0].reason);
+  const limit = Math.floor(src.length * 0.5);
+  const r = await stepA(src, limit, createNodeCodec());
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.bytes.length <= limit);
+  const out = findImages(await loadPdf(r.bytes));
+  assert.equal(out[0].filter, 'DCTDecode');
 });

@@ -215,8 +215,12 @@ async function run(files, limit, output, answers = null) {
   if (result.status === 'cannot-fit') {
     summary.smallestReadable = result.smallestReadable;
     summary.partsOffered = result.parts;
+    summary.splitMode = result.mode;
     const split = result.parts && (answers ? answers.split : (await ask(`It can't fit ${formatLimit(limit)} and stay readable${result.smallestReadable ? ` - the smallest readable size is ${formatSize(result.smallestReadable, { precise: true })} (${exactBytes(result.smallestReadable)})` : ''}. Split into ${result.parts} files, each under ${formatLimit(limit)}?`, [`Split into ${result.parts} files`, 'Cancel'])) === 0);
-    if (split) {
+    if (split && result.ready) {
+      result = result.ready;
+      summary.steps.push('split-ready');
+    } else if (split) {
       const args = { mode: result.mode, limit, parts: result.parts, name: result.name || files[0].name };
       if (result.mode === 'photos') args.files = files.map((f) => ({ name: f.name, bytes: f.bytes.slice() }));
       else args.source = result.source;
