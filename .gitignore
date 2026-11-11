@@ -1,0 +1,33 @@
+# Local agent notes and planning - never in git
+/CLAUDE.md
+/planning/
+marketing/
+.claude/
+
+# Dependencies and tooling
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+
+# Generated test samples (made by `npm run samples`) and private files lent by the user
+test/samples/*
+!test/samples/README.md
+test/out/
+
+# Demo film (HyperFrames) render and cache folders
+video/node_modules/
+video/renders/
+video/.hyperframes/
+video/.cache/
+video/AGENTS.md
+video/CLAUDE.md
+video/.thumbnails/
+
+# Fonts are licensed - never commit them
+*.ttf
+*.otf
+*.woff
+*.woff2

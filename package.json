@@ -1,0 +1,27 @@
+{
+  "name": "makeitfit",
+  "version": "0.1.0",
+  "description": "Drop photos or PDFs, type the size limit, get one file that fits - made entirely in your browser, nothing uploaded",
+  "author": "aiworldbyshachar",
+  "homepage": "https://aiworldbyshachar.github.io/makeitfit/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aiworldbyshachar/makeitfit.git"
+  },
+  "bugs": "https://github.com/aiworldbyshachar/makeitfit/issues",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "preview": "node dev/serve.js",
+    "vendor": "node scripts/vendor.js",
+    "samples": "node scripts/make-samples.js"
+  },
+  "devDependencies": {
+    "jpeg-js": "0.4.4",
+    "libheif-js": "1.23.5",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.5.438"
+  }
+}

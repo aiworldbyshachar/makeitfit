@@ -1,0 +1,8 @@
+* text=auto eol=lf
+# Vendored libraries stay byte-identical to the npm packages
+docs/vendor/** -text
+*.wasm binary
+*.pdf binary
+*.jpg binary
+*.png binary
+*.heic binary
