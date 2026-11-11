@@ -14,6 +14,7 @@ export function offlineFiles() {
   const out = [];
   const walk = (dir) => {
     for (const name of fs.readdirSync(dir).sort()) {
+      if (name.startsWith('.')) continue; // .nojekyll and the like
       const full = path.join(dir, name);
       const rel = path.relative(docs, full).split(path.sep).join('/');
       if (fs.statSync(full).isDirectory()) {
