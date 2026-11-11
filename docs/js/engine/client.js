@@ -29,6 +29,8 @@ export function createEngine() {
   return {
     /** Exact facts for a dropped file. */
     describe: (file) => call('describe', { file }),
+    /** A small JPEG preview of a photo (any allowed kind, HEIC too): { bytes, width, height }. */
+    thumb: (bytes, kind) => call('thumb', { bytes, kind }),
     /** The job (see pipeline.js makeItFit). Step B is never run here - it returns 'ask-rasterize'. */
     fit: (job, onProgress) => call('fit', { ...job, allowRasterize: false }, onProgress),
     /** Step B after the user said yes. */

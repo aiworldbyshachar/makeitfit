@@ -1,5 +1,5 @@
 // Local preview server (dev only):  npm run preview  ->  http://localhost:5181/
-//   /                    the site (docs/)        - from M2
+//   /docs/               the site (/ redirects here)
 //   /dev/engine.html     the engine bench (drop files or run the generated samples)
 //   /__samples           JSON list of the generated files in test/samples/
 // Serves only this folder, never .env, .git, planning/ or CLAUDE.md. Port 5181 is MakeItFit's (07-family-apps.md).
@@ -52,17 +52,16 @@ http
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(files));
     }
-    let file = path.normalize(path.join(root, url === '/' ? 'docs/index.html' : url));
+    // The site lives in docs/ (GitHub Pages serves that folder as the site root), so its relative links work there.
+    if (url === '/') return res.writeHead(302, { Location: '/docs/' }).end();
+    let file = path.normalize(path.join(root, url));
     if (url.endsWith('/')) file = path.join(file, 'index.html');
     const rel = path.relative(root, file);
     if (rel.startsWith('..') || blocked(rel)) return res.writeHead(403).end('forbidden');
     fs.readFile(file, (err, data) => {
-      if (err) {
-        if (url === '/') return res.writeHead(302, { Location: '/dev/engine.html' }).end();
-        return res.writeHead(404).end('not found');
-      }
+      if (err) return res.writeHead(404).end('not found');
       res.writeHead(200, { 'Content-Type': types[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
       res.end(data);
     });
   })
-  .listen(PORT, '127.0.0.1', () => console.log(`MakeItFit preview at http://localhost:${PORT}/  (engine bench: /dev/engine.html)`));
+  .listen(PORT, '127.0.0.1', () => console.log(`MakeItFit preview at http://localhost:${PORT}/docs/  (engine bench: /dev/engine.html)`));

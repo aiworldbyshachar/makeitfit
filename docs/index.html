@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Nothing leaves the device: the page may only talk to its own site (no uploads, no CDNs, no trackers). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' blob: data:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>MakeItFit - make photos and PDFs fit the size limit</title>
+  <meta name="description" content="Drop photos or PDFs, type the size limit, get one file that fits. Free, private, made in your browser - nothing is uploaded.">
+  <meta name="theme-color" content="#f5f5f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#14141b" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/site.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="./"><img src="icons/icon-64.png" alt="" width="32" height="32">MakeItFit</a>
+      <a class="toplink" href="https://github.com/aiworldbyshachar/makeitfit"><svg viewBox="0 0 16 16" aria-hidden="true" class="fill"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span class="long" data-i18n="githubLong">Source on </span><span data-i18n="github">GitHub</span></a>
+      <a class="toplink" href="https://ko-fi.com/aiworldbyshachar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3.5c-.8 1 .8 2 0 3M12 3.5c-.8 1 .8 2 0 3"/></svg><span data-i18n="support">Support</span></a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1 data-i18n-html="headingHtml">Make the file <em>fit</em>.</h1>
+        <p class="lead" data-i18n="lead">Drop photos or PDFs, type the size limit, and get one file that fits. It all happens in your browser - nothing is uploaded.</p>
+      </section>
+
+      <section class="tool" id="tool">
+        <div class="limit">
+          <label class="limit-field" for="limit">
+            <span class="limit-label" data-i18n="limitLabel">Under</span>
+            <input id="limit" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="3" data-i18n-aria="limitAria" aria-label="Size limit in MB" aria-describedby="limit-bad">
+            <span class="limit-unit" data-i18n="limitUnit">MB</span>
+          </label>
+          <div class="chips" role="group" data-i18n-aria="limitQuick" aria-label="Common limits">
+            <button type="button" data-limit="1">1 MB</button>
+            <button type="button" data-limit="2">2 MB</button>
+            <button type="button" data-limit="5">5 MB</button>
+            <button type="button" data-limit="10">10 MB</button>
+            <button type="button" data-limit="20">20 MB</button>
+          </div>
+          <p class="limit-bad" id="limit-bad" data-i18n="limitBad" hidden>Type a size, like 2 or 2.5</p>
+        </div>
+
+        <div class="drop" id="drop">
+          <svg class="drop-icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M14 6h14l10 10v24a3 3 0 0 1-3 3H14a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3z"/><path d="M28 6v10h10"/><path d="M17 29h5M31 29h-5M20 26l3 3-3 3M28 26l-3 3 3 3"/></svg>
+          <p class="drop-title" data-i18n="dropTitle">Drop photos or PDFs here</p>
+          <div class="drop-actions">
+            <label class="btn primary" for="pick"><span data-i18n="choose">Choose files</span></label>
+            <label class="btn camera" for="camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span data-i18n="takePhoto">Take a photo</span></label>
+          </div>
+          <input type="file" id="pick" multiple accept="image/*,.heic,.heif,application/pdf,.pdf" hidden>
+          <input type="file" id="camera" accept="image/*" capture="environment" hidden>
+        </div>
+
+        <ol class="files" id="files"></ol>
+
+        <div class="summary" id="summary" hidden>
+          <div class="total"><span id="total"></span> <span id="compare"></span></div>
+          <div class="output" id="output-row">
+            <span class="output-label" data-i18n="outputLabel">Make</span>
+            <div class="seg" role="radiogroup" id="output">
+              <button type="button" role="radio" data-out="pdf" data-i18n="outPdf">One PDF</button>
+              <button type="button" role="radio" data-out="separate" data-i18n="outSeparate">Separate files</button>
+              <button type="button" role="radio" data-out="jpg" data-i18n="outJpg">JPG</button>
+            </div>
+          </div>
+          <p class="note" id="jpg-note" data-i18n="jpgOnlyOne" hidden>JPG is for one photo.</p>
+          <div class="go-row">
+            <button type="button" class="btn primary big" id="go" data-i18n="go">Make it fit</button>
+            <label class="btn quiet" for="pick"><span data-i18n="addMore">Add more</span></label>
+          </div>
+        </div>
+
+        <div class="panel" id="working" hidden>
+          <p class="stage" id="stage" aria-live="polite"></p>
+          <div class="bar" id="bar"><div></div></div>
+          <button type="button" class="btn quiet" id="cancel" data-i18n="cancel">Cancel</button>
+        </div>
+
+        <div class="panel ask" id="ask" hidden>
+          <h2 data-i18n="askTitle">Turn the pages into images?</h2>
+          <p id="ask-body"></p>
+          <div class="actions">
+            <button type="button" class="btn primary" id="ask-yes" data-i18n="askYes">Turn pages into images</button>
+            <button type="button" class="btn" id="ask-split" data-i18n="askSplit">Split instead, keep the text</button>
+          </div>
+        </div>
+
+        <div class="panel cant" id="cant" hidden>
+          <h2 id="cant-title"></h2>
+          <p id="cant-body"></p>
+          <div class="actions">
+            <button type="button" class="btn primary" id="cant-split"></button>
+            <button type="button" class="btn" id="cant-bigger" data-i18n="cantBigger">Change the limit</button>
+          </div>
+        </div>
+
+        <div class="panel result" id="result" hidden>
+          <div class="result-head">
+            <svg class="check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg>
+            <div>
+              <h2 id="result-title"></h2>
+              <p class="exact" id="result-exact"></p>
+            </div>
+          </div>
+          <p class="note" id="result-note" hidden></p>
+          <ul class="outputs" id="outputs"></ul>
+          <div class="previews" id="previews"></div>
+          <div class="actions">
+            <button type="button" class="btn primary" id="download" data-i18n="download">Download</button>
+            <button type="button" class="btn" id="share" data-i18n="share" hidden>Share</button>
+            <button type="button" class="btn quiet" id="again" data-i18n="startOver">Start over</button>
+          </div>
+        </div>
+
+        <p class="error" id="error" role="alert" hidden></p>
+
+        <p class="privacy">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+          <span data-i18n="privacy">Your files never leave this device</span>
+          <span class="badge" data-i18n="offline">Works offline</span>
+        </p>
+        <p class="rule" data-i18n-html="oneRuleHtml"><b>The one rule:</b> photos and PDFs only (JPG, PNG, HEIC, WebP, PDF).</p>
+      </section>
+    </main>
+
+    <footer>
+      <span>MakeItFit</span>
+      <span data-i18n="footerFree">Free and open source (MIT)</span>
+      <a href="https://aiworldbyshachar.github.io/" data-i18n="moreTools">More free tools</a>
+      <span data-i18n="footerBy">By AI World by Shachar</span>
+    </footer>
+  </div>
+</body>
+</html>

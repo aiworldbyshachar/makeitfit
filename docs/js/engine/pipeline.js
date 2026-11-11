@@ -7,7 +7,7 @@
 //   'cannot-fit'     even the readable floor is over the limit; offer to split into `parts` files
 //   'unsupported'    a file isn't a photo or a PDF (the one rule)
 //   'protected'      a PDF is password-protected and can't be merged
-import { PDFDocument } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
+import { PDFDocument, degrees } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
 import { sniff, PHOTO_KINDS, MIME, scaledPixels, sharedView } from './images.js';
 import { SetFitter, PHOTO_STEPS, fitSet, pickMix } from './search.js';
 import { buildImagePdf, imagePdfOverhead, photoPageSize, stampInfo, copyPageRun } from './pdf-build.js';
@@ -129,7 +129,10 @@ async function combine(items, codec) {
       const src = await loadPdf(it.bytes);
       if (src.isEncrypted) throw new ProtectedError(it.name);
       const pages = await doc.copyPages(src, src.getPageIndices());
-      for (const p of pages) doc.addPage(p);
+      for (const p of pages) {
+        if (it.rotate) p.setRotation(degrees((p.getRotation().angle + it.rotate) % 360));
+        doc.addPage(p);
+      }
     } else {
       const full = await codec.decodeImage(it.bytes, MIME[it.kind], { rotate: it.rotate || 0 });
       const scaled = await codec.resize(full, COMBINE_SIDE);
@@ -180,7 +183,8 @@ export async function makeItFit(job, env, onProgress = () => {}) {
         outputs.push({ name: it.name, bytes: it.bytes, unchanged: true });
         continue;
       }
-      const r = it.kind === 'pdf' ? await stepA(it.bytes, limit, codec, { onProgress: progress('stepA') }) : await photoToJpeg(it, limit, codec, progress('photo'));
+      const src = it.kind === 'pdf' && it.rotate ? await combine([it], codec) : it.bytes;
+      const r = it.kind === 'pdf' ? await stepA(src, limit, codec, { onProgress: progress('stepA') }) : await photoToJpeg(it, limit, codec, progress('photo'));
       if (r.ok) outputs.push({ name: outputName(it.name, limit, it.kind === 'pdf' ? 'pdf' : 'jpg'), bytes: r.bytes });
       else failed.push({ name: it.name, reason: r.reason || 'floor', smallestReadable: r.floorSize });
     }
@@ -200,7 +204,7 @@ export async function makeItFit(job, env, onProgress = () => {}) {
 
   let source;
   try {
-    source = items.length === 1 ? pdfs[0].bytes : await combine(items, codec);
+    source = items.length === 1 && !pdfs[0].rotate ? pdfs[0].bytes : await combine(items, codec);
   } catch (e) {
     if (e instanceof ProtectedError) return { status: 'protected', names: [e.message] };
     throw e;

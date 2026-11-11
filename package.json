@@ -16,7 +16,9 @@
     "test": "node --test \"test/**/*.test.js\"",
     "preview": "node dev/serve.js",
     "vendor": "node scripts/vendor.js",
-    "samples": "node scripts/make-samples.js"
+    "samples": "node scripts/make-samples.js",
+    "icons": "node scripts/make-icons.js",
+    "sw": "node scripts/build-sw.js"
   },
   "devDependencies": {
     "jpeg-js": "0.4.4",

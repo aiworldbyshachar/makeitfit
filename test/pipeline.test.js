@@ -86,3 +86,11 @@ test('a PDF plus a photo combine into one PDF under the limit', async () => {
   assert.ok(r.outputs[0].size <= limit);
   assert.equal((await PDFDocument.load(r.outputs[0].bytes)).getPageCount(), 3);
 });
+
+test('a rotated PDF comes back with its pages turned', async () => {
+  const src = await scannedPdf(2, 300, 420);
+  const r = await makeItFit({ files: [{ name: 'sideways.pdf', bytes: src, rotate: 90 }], limit: 10_000_000 }, env());
+  assert.equal(r.status, 'done');
+  const doc = await PDFDocument.load(r.outputs[0].bytes);
+  assert.deepEqual(doc.getPages().map((p) => p.getRotation().angle), [90, 90]);
+});

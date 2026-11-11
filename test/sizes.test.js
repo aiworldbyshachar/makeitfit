@@ -24,6 +24,9 @@ test('sizes round down, so a fitting result never looks like it reached the limi
   assert.equal(formatSize(3_000_000), '3 MB');
   assert.equal(formatSize(940_500), '940 KB');
   assert.equal(formatSize(512), '512 bytes');
+  assert.equal(formatSize(3_187_999, { round: 'nearest' }), '3.2 MB');
+  assert.equal(formatSize(999_700, { round: 'nearest' }), '1 MB');
+  assert.equal(formatSize(999_700), '999 KB');
 });
 
 test('limits and exact bytes read naturally', () => {

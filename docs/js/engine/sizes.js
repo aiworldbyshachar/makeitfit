@@ -27,14 +27,16 @@ function trim(n, decimals) {
 
 /**
  * Human size: "940 KB", "8.4 MB". With { precise: true } it shows two decimals for MB ("2.94 MB").
- * Rounds down, so a size under a limit is never shown as equal to or above it.
+ * Results round down ({ round: 'down' }, the default), so a size under a limit is never shown as equal to
+ * or above it; the sizes of dropped files round to the nearest ({ round: 'nearest' }).
  */
-export function formatSize(bytes, { precise = false } = {}) {
+export function formatSize(bytes, { precise = false, round = 'down' } = {}) {
+  const r = round === 'nearest' ? Math.round : Math.floor;
   if (bytes < KB) return `${bytes} bytes`;
-  if (bytes < MB) return `${Math.floor(bytes / KB)} KB`;
+  if (bytes < MB && r(bytes / KB) < 1000) return `${r(bytes / KB)} KB`;
   const d = precise ? 2 : 1;
   const f = 10 ** d;
-  return `${trim(Math.floor((bytes / MB) * f) / f, d)} MB`;
+  return `${trim(r((bytes / MB) * f) / f, d)} MB`;
 }
 
 /** A limit as typed back to the user: 3000000 -> "3 MB", 2500000 -> "2.5 MB", 500000 -> "500 KB". */

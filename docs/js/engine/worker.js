@@ -4,6 +4,7 @@
 // ImageBitmaps ("raster-*" commands) so all resizing and encoding still runs in this worker.
 import { makeItFit, splitToFit, describe } from './pipeline.js';
 import { createBrowserCodec } from './codec-browser.js';
+import { MIME } from './images.js';
 
 const codec = createBrowserCodec();
 const rasters = new Map();
@@ -26,6 +27,16 @@ function transferables(result) {
 
 const commands = {
   describe: (args) => describe(args.file),
+  thumb: async ({ bytes, kind, side = 240 }) => {
+    const full = await codec.decodeImage(bytes, MIME[kind]);
+    const small = await codec.resize(full, side);
+    if (small !== full) codec.release(full);
+    try {
+      return { bytes: await codec.encodeJpeg(small, 0.78), width: full.width, height: full.height };
+    } finally {
+      codec.release(small);
+    }
+  },
   fit: (args, progress) => makeItFit(args, { codec }, progress),
   split: (args, progress) => splitToFit(args, { codec }, progress),
   'raster-put': ({ bitmap }) => keep({ width: bitmap.width, height: bitmap.height, src: bitmap }),

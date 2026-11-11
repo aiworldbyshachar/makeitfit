@@ -1,0 +1,15 @@
+{
+  "name": "MakeItFit",
+  "short_name": "MakeItFit",
+  "description": "Drop photos or PDFs, type the size limit, get one file that fits - made in your browser, nothing uploaded.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f5f8",
+  "theme_color": "#f5f5f8",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
