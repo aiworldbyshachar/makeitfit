@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MakeItFit - engine bench (dev)</title>
+<style>
+  :root { --accent: #5550d8; --ink: #1d1d27; --muted: #6b6b7b; --line: #e4e2ee; --bg: #faf9f6; --card: #fff; --ok: #1f8a4c; --warn: #b4540a; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #ecebf3; --muted: #a3a2b3; --line: #33323f; --bg: #16161c; --card: #1f1f27; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 "Segoe UI", system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  label { cursor: pointer; }
+  input[type=text], select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+  button { font: inherit; padding: 8px 16px; border: 0; border-radius: 9px; background: var(--accent); color: #fff; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .samples label { display: inline-flex; gap: 6px; margin: 2px 14px 2px 0; }
+  .ok { color: var(--ok); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .thumbs canvas, .thumbs img { max-height: 180px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+  .result h3 { margin: 0 0 6px; font-size: 16px; }
+  .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  a.dl { color: var(--accent); }
+  pre { white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MakeItFit - engine bench</h1>
+  <p class="sub">Dev only. Pick generated samples or your own files, type the limit, run. Everything stays in this browser.</p>
+
+  <section class="panel">
+    <div class="row"><strong>Samples</strong> <span class="muted">(npm run samples)</span></div>
+    <div class="samples" id="samples">loading...</div>
+    <div class="row" style="margin-top:10px"><strong>Or your files</strong> <input type="file" id="own" multiple accept="image/*,.heic,.heif,application/pdf"></div>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <label>Under <input type="text" id="limit" value="3 MB" size="8"></label>
+      <label>Output <select id="output"><option value="">automatic</option><option value="pdf">one PDF</option><option value="jpg">JPG</option><option value="separate">separate files</option></select></label>
+      <button id="go">Make it fit</button>
+      <button id="scenarios" class="secondary">Run the M1 scenarios</button>
+    </div>
+    <div id="facts" style="margin-top:12px"></div>
+  </section>
+
+  <div id="results"></div>
+</main>
+
+<script type="module">
+import { createEngine } from '../docs/js/engine/client.js';
+import { parseLimit, formatSize, formatLimit, exactBytes, compare } from '../docs/js/engine/sizes.js';
+import { openPdfRenderer } from '../docs/js/engine/render-pdfjs.js';
+
+const engine = createEngine();
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+let samples = [];
+
+async function loadSamples() {
+  samples = await (await fetch('/__samples')).json();
+  $('samples').innerHTML = samples.length
+    ? samples.map((s) => `<label><input type="checkbox" value="${esc(s.name)}"> ${esc(s.name)} <span class="muted">${formatSize(s.size)}</span></label>`).join('')
+    : '<span class="warn">No samples yet - run npm run samples</span>';
+}
+
+async function readSample(name) {
+  const bytes = new Uint8Array(await (await fetch(`/test/samples/${encodeURIComponent(name)}`)).arrayBuffer());
+  return { name, bytes };
+}
+
+async function chosenFiles() {
+  const picked = [...document.querySelectorAll('#samples input:checked')].map((i) => i.value);
+  const files = await Promise.all(picked.map(readSample));
+  for (const f of $('own').files) files.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+  return files;
+}
+
+/** The facts shown on drop: exact size per file, pages, total against the limit. */
+async function showFacts(files, limit) {
+  const facts = await Promise.all(files.map((f) => engine.describe({ name: f.name, bytes: f.bytes })));
+  const total = facts.reduce((s, f) => s + f.size, 0);
+  const c = compare(total, limit);
+  $('facts').innerHTML = `<table><tr><th>File</th><th>Kind</th><th class="num">Size</th><th class="num">Exact</th><th class="num">Pages</th></tr>
+    ${facts.map((f) => `<tr><td>${esc(f.name)}</td><td>${f.kind || '<span class="warn">not allowed</span>'}</td><td class="num">${formatSize(f.size)}</td><td class="num">${exactBytes(f.size)}</td><td class="num">${f.pages ?? ''}</td></tr>`).join('')}
+    <tr><th>Total</th><td></td><th class="num">${formatSize(total)}</th><th class="num">${exactBytes(total)}</th><td></td></tr></table>
+    <p>${c.fits ? '<span class="ok">Already fits</span>' : `<span class="warn">${c.ratioText} times over the limit</span>`} (limit ${formatLimit(limit)} = ${exactBytes(limit)})</p>`;
+  return facts;
+}
+
+function progressBar(card) {
+  const bar = card.querySelector('.progress div');
+  const label = card.querySelector('.stage');
+  return (p) => {
+    if (p.total) bar.style.width = `${Math.round((p.done / p.total) * 100)}%`;
+    label.textContent = `${p.stage || ''} ${p.phase || ''} ${p.done ?? ''}/${p.total ?? ''}`;
+  };
+}
+
+function newCard(title) {
+  const card = document.createElement('section');
+  card.className = 'panel result';
+  card.innerHTML = `<h3>${esc(title)}</h3><div class="muted stage">starting...</div><div class="progress"><div></div></div><div class="body"></div>`;
+  $('results').prepend(card);
+  return card;
+}
+
+/** A canvas that can go on the page (rendered pages may be OffscreenCanvases). */
+function toVisible(src) {
+  if (src instanceof HTMLCanvasElement) return src;
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  c.getContext('2d').drawImage(src, 0, 0);
+  return c;
+}
+
+/** Checks an output the way a user would: pages render, sizes exact, JPG upright and without EXIF. */
+async function verify(o) {
+  const v = { name: o.name, size: o.size };
+  if (o.name.endsWith('.pdf')) {
+    const r = await openPdfRenderer(o.bytes);
+    v.pages = r.pageCount;
+    v.thumbs = [];
+    for (const i of [...new Set([0, Math.floor(r.pageCount / 2), r.pageCount - 1])].slice(0, 3)) {
+      const raster = await r.renderPage(i, 40);
+      v.thumbs.push(toVisible(raster.src));
+    }
+    r.close();
+  } else {
+    const bmp = await createImageBitmap(new Blob([o.bytes], { type: 'image/jpeg' }));
+    v.width = bmp.width;
+    v.height = bmp.height;
+    bmp.close();
+    let exif = false;
+    for (let i = 2; i + 4 < o.bytes.length && o.bytes[i] === 0xff && o.bytes[i + 1] !== 0xda; i += 2 + ((o.bytes[i + 2] << 8) | o.bytes[i + 3])) {
+      if (o.bytes[i + 1] === 0xe1) exif = true;
+    }
+    v.exif = exif;
+    const img = new Image();
+    img.src = URL.createObjectURL(new Blob([o.bytes], { type: 'image/jpeg' }));
+    v.thumbs = [img];
+  }
+  return v;
+}
+
+async function showOutputs(card, result, limit, ms) {
+  const body = card.querySelector('.body');
+  const rows = [];
+  const thumbs = document.createElement('div');
+  thumbs.className = 'thumbs';
+  const verified = [];
+  for (const o of result.outputs) {
+    const v = await verify(o);
+    verified.push({ name: v.name, size: v.size, pages: v.pages, width: v.width, height: v.height, exif: v.exif, fits: o.size <= limit });
+    for (const t of v.thumbs) thumbs.append(t);
+    const url = URL.createObjectURL(new Blob([o.bytes]));
+    rows.push(`<tr><td><a class="dl" href="${url}" download="${esc(o.name)}">${esc(o.name)}</a></td><td class="num">${formatSize(o.size, { precise: true })}</td><td class="num">${exactBytes(o.size)}</td>
+      <td>${o.size <= limit ? `<span class="ok">fits under ${formatLimit(limit)}</span>` : '<span class="warn">OVER</span>'}</td><td class="num">${v.pages ? `${v.pages} pages` : `${v.width} x ${v.height}${v.exif ? ' <span class="warn">EXIF</span>' : ' no EXIF'}`}</td></tr>`);
+  }
+  const d = result.details || {};
+  const setting = d.setting ? (d.setting.step > 400 ? `long side ${d.setting.step} px` : `${d.setting.step} DPI`) + `, JPEG quality ${d.setting.quality}` : '';
+  body.innerHTML = `<p><strong>${result.status === 'already-fits' ? 'Already fits - returned unchanged' : `Done (${result.method})`}</strong> in ${(ms / 1000).toFixed(1)} s ${setting ? `- ${setting}` : ''}${d.textIsImage ? ' - <span class="warn">the text is now an image</span>' : ''}</p>
+    <table><tr><th>Output</th><th class="num">Size</th><th class="num">Exact</th><th></th><th class="num"></th></tr>${rows.join('')}</table>`;
+  body.append(thumbs);
+  card.querySelector('.stage').textContent = '';
+  return verified;
+}
+
+/**
+ * Runs one job end to end. `answers` decides the questions automatically (for the scenarios):
+ * { rasterize: true|false, split: true|false }. Returns a plain summary.
+ */
+async function run(files, limit, output, answers = null) {
+  const card = newCard(`${files.map((f) => f.name).join(', ')} -> under ${formatLimit(limit)}`);
+  const onProgress = progressBar(card);
+  const summary = { inputs: files.map((f) => ({ name: f.name, size: f.bytes.length })), limit, steps: [] };
+  const t0 = performance.now();
+  let result = await engine.fit({ files: files.map((f) => ({ name: f.name, bytes: f.bytes.slice() })), limit, output: output || undefined }, onProgress);
+  summary.steps.push(result.status);
+
+  const ask = (html, buttons) => new Promise((resolve) => {
+    const body = card.querySelector('.body');
+    body.innerHTML = `<p>${html}</p><div class="actions">${buttons.map((b, i) => `<button data-i="${i}" class="${i ? 'secondary' : ''}">${esc(b)}</button>`).join('')}</div>`;
+    body.querySelectorAll('button').forEach((b) => (b.onclick = () => resolve(Number(b.dataset.i))));
+  });
+
+  if (result.status === 'ask-rasterize') {
+    const a = result.stepA;
+    const yes = answers ? (answers.rasterize ? 0 : 1)
+      : await ask(`Shrinking the photos inside isn't enough${a.smallestReadable ? ` (smallest with selectable text: ${formatSize(a.smallestReadable, { precise: true })})` : ''}. To reach ${formatLimit(limit)} the pages become images - the text will look the same but can't be selected. Continue?`, ['Turn pages into images', 'Split instead, keep the text']);
+    summary.stepA = a;
+    if (yes === 0) {
+      const t1 = performance.now();
+      result = await engine.rasterize(result.source, limit, result.name, onProgress);
+      summary.stepBms = Math.round(performance.now() - t1);
+      summary.steps.push(result.status);
+    } else {
+      result = { status: 'cannot-fit', mode: 'stepA', source: result.source, name: result.name, parts: Math.max(2, Math.ceil((a.smallestReadable || limit * 2) / (limit * 0.8))) };
+    }
+  }
+  if (result.status === 'cannot-fit') {
+    summary.smallestReadable = result.smallestReadable;
+    summary.partsOffered = result.parts;
+    const split = result.parts && (answers ? answers.split : (await ask(`It can't fit ${formatLimit(limit)} and stay readable${result.smallestReadable ? ` - the smallest readable size is ${formatSize(result.smallestReadable, { precise: true })} (${exactBytes(result.smallestReadable)})` : ''}. Split into ${result.parts} files, each under ${formatLimit(limit)}?`, [`Split into ${result.parts} files`, 'Cancel'])) === 0);
+    if (split) {
+      const args = { mode: result.mode, limit, parts: result.parts, name: result.name || files[0].name };
+      if (result.mode === 'photos') args.files = files.map((f) => ({ name: f.name, bytes: f.bytes.slice() }));
+      else args.source = result.source;
+      result = await engine.split(args, onProgress);
+      summary.steps.push(result.status);
+    }
+  }
+  const ms = performance.now() - t0;
+  summary.ms = Math.round(ms);
+  summary.status = result.status;
+  summary.method = result.method;
+  summary.setting = result.details?.setting;
+  window.lastOutputs = result.outputs || [];
+  if (result.outputs) summary.outputs = await showOutputs(card, result, limit, ms);
+  else {
+    card.querySelector('.stage').textContent = '';
+    card.querySelector('.body').innerHTML = `<p class="warn">${esc(result.status)}${result.names ? `: ${esc(result.names.join(', '))} - photos and PDFs only` : ''}</p>`;
+    summary.names = result.names;
+  }
+  summary.allFit = !!summary.outputs?.every((o) => o.fits);
+  return summary;
+}
+
+$('go').onclick = async () => {
+  const limit = parseLimit($('limit').value);
+  if (!limit) return alert('Type a size, like 3 MB');
+  const files = await chosenFiles();
+  if (!files.length) return alert('Pick a sample or a file');
+  $('go').disabled = true;
+  try {
+    await showFacts(files, limit);
+    await run(files, limit, $('output').value);
+  } catch (e) {
+    console.error(e);
+    alert(e.message);
+  } finally {
+    $('go').disabled = false;
+  }
+};
+
+// The milestone's proof: each case with its limit and the answers a user would give.
+const SCENARIOS = [
+  { id: 'heic-to-pdf', files: ['iphone-id-front.heic', 'iphone-id-back.heic', 'iphone-payslip.heic'], limit: '2 MB' },
+  { id: 'step-a', files: ['text-with-photos.pdf'], limit: '3 MB' },
+  { id: 'scan-step-b', files: ['scan-60.pdf'], limit: '10 MB', answers: { rasterize: true, split: true } },
+  { id: 'scan-split', files: ['scan-60.pdf'], limit: '3 MB', answers: { rasterize: true, split: true } },
+  { id: 'split-300', files: ['long-300.pdf'], limit: '2 MB', answers: { rasterize: true, split: true } },
+  { id: 'png-to-jpg', files: ['screenshot-huge.png'], limit: '1 MB' },
+  { id: 'rotated-gps', files: ['photo-rotated-gps.jpg'], limit: '1 MB' },
+  { id: 'already-fits', files: ['small-fits.jpg'], limit: '1 MB' },
+  { id: 'one-rule', files: ['letter.docx'], limit: '1 MB' },
+];
+
+window.runScenario = async (id) => {
+  const s = SCENARIOS.find((x) => x.id === id);
+  const files = await Promise.all(s.files.map(readSample));
+  const limit = parseLimit(s.limit);
+  return { id, ...(await run(files, limit, s.output, s.answers || { rasterize: true, split: true })) };
+};
+window.scenarioIds = SCENARIOS.map((s) => s.id);
+
+/** Dev only: saves pages of the last result as PNGs into test/out/ (through the dev server) to check by eye. */
+window.savePages = async (prefix, { output = 0, pages = [0], dpi = 100 } = {}) => {
+  const o = window.lastOutputs[output];
+  const saved = [];
+  if (o.name.endsWith('.jpg')) {
+    await fetch(`/__save?name=${encodeURIComponent(prefix)}.jpg`, { method: 'POST', body: o.bytes });
+    return [`${prefix}.jpg`];
+  }
+  const r = await openPdfRenderer(o.bytes);
+  for (const i of pages) {
+    const raster = await r.renderPage(Math.min(i, r.pageCount - 1), dpi);
+    const blob = raster.src.convertToBlob ? await raster.src.convertToBlob({ type: 'image/png' }) : await new Promise((res) => raster.src.toBlob(res, 'image/png'));
+    const name = `${prefix}-p${i + 1}.png`;
+    await fetch(`/__save?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
+    saved.push(name);
+  }
+  r.close();
+  return saved;
+};
+window.lastResults = [];
+
+$('scenarios').onclick = async () => {
+  $('scenarios').disabled = true;
+  try {
+    for (const s of SCENARIOS) window.lastResults.push(await window.runScenario(s.id));
+  } finally {
+    $('scenarios').disabled = false;
+  }
+};
+
+loadSamples();
+</script>
+</body>
+</html>
